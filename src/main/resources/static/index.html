@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Diamond Prediction Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f4f6f8;
+        }
+        h1 {
+            margin-bottom: 30px;
+        }
+        .chart-container {
+            width: 90%;
+            max-width: 1000px;
+            background: white;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        canvas {
+            max-height: 350px;
+        }
+        .status {
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+<h1>Diamond Price Prediction Dashboard</h1>
+<div class="status" id="status">Connecting...</div>
+
+<div class="chart-container">
+    <h2>Average Predicted Price vs Iteration</h2>
+    <canvas id="avgPriceChart"></canvas>
+</div>
+
+<div class="chart-container">
+    <h2>RMSE vs Iteration</h2>
+    <canvas id="rmseChart"></canvas>
+</div>
+
+<div class="chart-container">
+    <h2>R-Squared vs Iteration</h2>
+    <canvas id="r2Chart"></canvas>
+</div>
+
+<script>
+    const labels = [];
+    const avgPriceData = [];
+    const rmseData = [];
+    const r2Data = [];
+
+    const avgPriceChart = new Chart(document.getElementById('avgPriceChart'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Average Predicted Price',
+                data: avgPriceData,
+                borderColor: 'blue',
+                backgroundColor: 'rgba(0, 0, 255, 0.1)',
+                tension: 0.2,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true
+        }
+    });
+
+    const rmseChart = new Chart(document.getElementById('rmseChart'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'RMSE',
+                data: rmseData,
+                borderColor: 'red',
+                backgroundColor: 'rgba(255, 0, 0, 0.1)',
+                tension: 0.2,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true
+        }
+    });
+
+    const r2Chart = new Chart(document.getElementById('r2Chart'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'R²',
+                data: r2Data,
+                borderColor: 'green',
+                backgroundColor: 'rgba(0, 255, 0, 0.1)',
+                tension: 0.2,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true
+        }
+    });
+
+    function addPoint(message) {
+        labels.push(message.iteration);
+        avgPriceData.push(message.avg_predicted_price);
+        rmseData.push(message.rmse);
+        r2Data.push(message.r2);
+
+        avgPriceChart.update();
+        rmseChart.update();
+        r2Chart.update();
+    }
+
+    const socket = new SockJS('/ws');
+    const stompClient = Stomp.over(socket);
+
+    stompClient.connect({}, function () {
+        document.getElementById('status').innerText = 'Connected';
+        stompClient.subscribe('/topic/predictions', function (payload) {
+            const message = JSON.parse(payload.body);
+            console.log('Received:', message);
+            addPoint(message);
+        });
+    }, function () {
+        document.getElementById('status').innerText = 'Connection failed';
+    });
+</script>
+</body>
+</html>
