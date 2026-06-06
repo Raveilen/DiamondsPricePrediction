@@ -88,7 +88,8 @@ public class PythonPredictionService {
             }
 
             try {
-                return Double.parseDouble(stdout);
+                String firstLine = stdout.split("[\\r\\n]+")[0].trim();
+                return Double.parseDouble(firstLine);
             } catch (NumberFormatException e) {
                 throw new PredictionExecutionException("Prediction script returned non-numeric output: " + stdout, e);
             }

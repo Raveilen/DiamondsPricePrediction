@@ -13,8 +13,12 @@ import os
 
 os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+# Set directly in script so it works regardless of whether the IDE
+# was restarted after the system environment variable was changed.
+os.environ["HADOOP_HOME"] = "C:\\winutils"
 
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 from pyspark.ml import PipelineModel
 
 
@@ -57,6 +61,7 @@ def main() -> int:
         .config("spark.sql.execution.arrow.pyspark.enabled", "false")
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.python.worker.reuse", "false")
+        .config("spark.python.worker.faulthandler.enabled", "true")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")
@@ -64,18 +69,23 @@ def main() -> int:
     try:
         pipeline_model = PipelineModel.load(model_path)
 
-        input_row = spark.createDataFrame([{
-            "carat":   carat,
-            "cut":     cut,
-            "color":   color,
-            "clarity": clarity,
-            "depth":   depth,
-            "table":   table,
-            "x":       x_val,
-            "y":       y_val,
-            "z":       z_val,
-            "price":   0.0,  # dummy label — not used during transform
-        }])
+        # Use spark.range(1).select(lit(...)) instead of createDataFrame([{...}]).
+        # createDataFrame from a Python dict list serializes data through a Python
+        # worker process — which crashes on Windows when launched as a subprocess
+        # of Java (SpringBoot). lit() values are pure Scala operations; no Python
+        # worker is spawned at all.
+        input_row = spark.range(1).select(
+            F.lit(carat).alias("carat"),
+            F.lit(cut).alias("cut"),
+            F.lit(color).alias("color"),
+            F.lit(clarity).alias("clarity"),
+            F.lit(depth).alias("depth"),
+            F.lit(table).alias("table"),
+            F.lit(x_val).alias("x"),
+            F.lit(y_val).alias("y"),
+            F.lit(z_val).alias("z"),
+            F.lit(0.0).alias("price"),
+        )
 
         result = pipeline_model.transform(input_row)
         predicted_price = max(result.select("prediction").collect()[0][0], 0.0)
