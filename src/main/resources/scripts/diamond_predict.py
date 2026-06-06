@@ -1,45 +1,52 @@
 #!/usr/bin/env python3
 """
-Deterministic placeholder predictor for diamond price integration testing.
+PySpark RandomForest predictor for diamond price.
 
 Expected CLI argument order:
-carat cut color clarity depth table x y z
+  carat cut color clarity depth table x y z
 
-This script intentionally uses a simple formula so the Java/Python integration
-can be tested end-to-end until a real model is introduced.
+Trains a RandomForestRegressor on diamonds.csv (located in the same directory
+as this script), then predicts the price for the supplied input row.
+Prints the predicted price to stdout.
 """
 
 import sys
+import os
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler
+from pyspark.ml import Pipeline
+from pyspark.ml.regression import RandomForestRegressor
 
 
-CUT_WEIGHTS = {
-    "Fair": 0.90,
-    "Good": 0.98,
-    "Very Good": 1.03,
-    "Premium": 1.07,
-    "Ideal": 1.10,
-}
+CATEGORICAL_COLS = ["cut", "color", "clarity"]
+NUMERICAL_COLS   = ["carat", "depth", "table", "x", "y", "z"]
 
-COLOR_WEIGHTS = {
-    "D": 1.08,
-    "E": 1.06,
-    "F": 1.04,
-    "G": 1.02,
-    "H": 1.00,
-    "I": 0.97,
-    "J": 0.94,
-}
 
-CLARITY_WEIGHTS = {
-    "I1": 0.84,
-    "SI2": 0.90,
-    "SI1": 0.96,
-    "VS2": 1.02,
-    "VS1": 1.07,
-    "VVS2": 1.12,
-    "VVS1": 1.16,
-    "IF": 1.20,
-}
+def remove_outliers(df, cols):
+    for c in cols:
+        q = df.approxQuantile(c, [0.25, 0.75], 0.01)
+        iqr = q[1] - q[0]
+        df = df.filter(
+            (col(c) >= q[0] - 1.5 * iqr) & (col(c) <= q[1] + 1.5 * iqr)
+        )
+    return df
+
+
+def build_pipeline():
+    indexers = [
+        StringIndexer(inputCol=c, outputCol=c + "_indexed", handleInvalid="keep")
+        for c in CATEGORICAL_COLS
+    ]
+    encoders = [
+        OneHotEncoder(inputCol=c + "_indexed", outputCol=c + "_encoded")
+        for c in CATEGORICAL_COLS
+    ]
+    assembler_inputs = [c + "_encoded" for c in CATEGORICAL_COLS] + NUMERICAL_COLS
+    assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="features")
+    rf = RandomForestRegressor(featuresCol="features", labelCol="price", seed=42)
+    return Pipeline(stages=indexers + encoders + [assembler, rf])
 
 
 def main() -> int:
@@ -60,19 +67,49 @@ def main() -> int:
         print(f"Numeric parsing failed: {exc}", file=sys.stderr)
         return 1
 
-    cut_factor = CUT_WEIGHTS.get(cut, 1.0)
-    color_factor = COLOR_WEIGHTS.get(color, 1.0)
-    clarity_factor = CLARITY_WEIGHTS.get(clarity, 1.0)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(script_dir, "diamonds.csv")
 
-    dimensions_score = (x_val + y_val + z_val) * 45.0
-    depth_table_adjustment = (depth - 55.0) * 12.0 + (table - 55.0) * 8.0
+    if not os.path.exists(csv_path):
+        print(f"diamonds.csv not found at: {csv_path}", file=sys.stderr)
+        return 1
 
-    base_price = 4500.0 * carat + dimensions_score + depth_table_adjustment
-    predicted_price = base_price * cut_factor * color_factor * clarity_factor
-    predicted_price = max(predicted_price, 0.0)
+    spark = (
+        SparkSession.builder
+        .appName("DiamondPricePredict")
+        .master("local[*]")
+        .config("spark.driver.memory", "2g")
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("ERROR")
 
-    print(f"{predicted_price:.2f}")
-    return 0
+    try:
+        df = spark.read.csv(csv_path, header=True, inferSchema=True)
+        df = remove_outliers(df, NUMERICAL_COLS)
+
+        pipeline_model = build_pipeline().fit(df)
+
+        input_row = spark.createDataFrame([{
+            "carat":   carat,
+            "cut":     cut,
+            "color":   color,
+            "clarity": clarity,
+            "depth":   depth,
+            "table":   table,
+            "x":       x_val,
+            "y":       y_val,
+            "z":       z_val,
+            "price":   0.0,   # dummy label — not used during transform
+        }])
+
+        result = pipeline_model.transform(input_row)
+        predicted_price = max(result.select("prediction").collect()[0][0], 0.0)
+
+        print(f"{predicted_price:.2f}")
+        return 0
+
+    finally:
+        spark.stop()
 
 
 if __name__ == "__main__":
