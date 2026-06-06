@@ -211,12 +211,19 @@
 
             const responseData = await response.json();
 
-            document.getElementById("result").textContent =
-                "Server response:\n" + JSON.stringify(responseData, null, 2);
+            if (!response.ok) {
+                const errorMessage = responseData.message || "Prediction request failed.";
+                throw new Error(errorMessage + "\n" + JSON.stringify(responseData, null, 2));
+            }
 
-            // Placeholder until real prediction logic is added
+            const predictedPrice = responseData.predictedPrice;
             document.getElementById("predictedPrice").value =
-                "Prediction not implemented yet";
+                predictedPrice === null || predictedPrice === undefined ? "N/A" : predictedPrice;
+
+            document.getElementById("result").textContent =
+                "Prediction succeeded.\n" +
+                "Predicted price: " + predictedPrice + "\n" +
+                "Details:\n" + JSON.stringify(responseData, null, 2);
         } catch (error) {
             document.getElementById("result").textContent =
                 "Error while sending request:\n" + error;
