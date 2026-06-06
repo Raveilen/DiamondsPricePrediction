@@ -9,7 +9,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Service
 public class PythonPredictionService {
@@ -21,7 +24,7 @@ public class PythonPredictionService {
     public PythonPredictionService(
             @Value("${prediction.python.executable:python3}") String pythonExecutable,
             @Value("${prediction.python.script-path:src/main/resources/scripts/diamond_predict.py}") String pythonScriptPath,
-            @Value("${prediction.python.timeout-seconds:10}") long timeoutSeconds) {
+            @Value("${prediction.python.timeout-seconds:30}") long timeoutSeconds) {
         this.pythonExecutable = pythonExecutable;
         this.pythonScriptPath = pythonScriptPath;
         this.timeoutSeconds = timeoutSeconds;
@@ -46,14 +49,35 @@ public class PythonPredictionService {
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         try {
             Process process = processBuilder.start();
+
+            // Drain stdout and stderr concurrently — avoids OS pipe buffer deadlock.
+            // If both streams are read only AFTER waitFor(), the Python process can
+            // block trying to write while Java is blocked waiting for it to exit.
+            CompletableFuture<String> stdoutFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+                } catch (IOException e) {
+                    return "";
+                }
+            });
+
+            CompletableFuture<String> stderrFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+                } catch (IOException e) {
+                    return "";
+                }
+            });
+
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
-            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).trim();
 
             if (!finished) {
                 process.destroyForcibly();
                 throw new PredictionExecutionException("Prediction script timed out after " + timeoutSeconds + " seconds.");
             }
+
+            String stdout = stdoutFuture.get(5, TimeUnit.SECONDS);
+            String stderr = stderrFuture.get(5, TimeUnit.SECONDS);
 
             if (process.exitValue() != 0) {
                 throw new PredictionExecutionException(buildExecutionError(stderr, stdout));
@@ -73,6 +97,8 @@ public class PythonPredictionService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PredictionExecutionException("Prediction execution was interrupted.", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new PredictionExecutionException("Failed to read process output: " + e.getMessage(), e);
         }
     }
 

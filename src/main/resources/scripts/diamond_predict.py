@@ -1,52 +1,21 @@
 #!/usr/bin/env python3
 """
-PySpark RandomForest predictor for diamond price.
+Loads a pre-trained PySpark PipelineModel and predicts diamond price.
 
 Expected CLI argument order:
-  carat cut color clarity depth table x y z
+    carat cut color clarity depth table x y z
 
-Trains a RandomForestRegressor on diamonds.csv (located in the same directory
-as this script), then predicts the price for the supplied input row.
-Prints the predicted price to stdout.
+Run train_model.py first to produce the diamond_model directory.
 """
 
 import sys
 import os
 
+os.environ["PYSPARK_PYTHON"] = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
-from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler
-from pyspark.ml import Pipeline
-from pyspark.ml.regression import RandomForestRegressor
-
-
-CATEGORICAL_COLS = ["cut", "color", "clarity"]
-NUMERICAL_COLS   = ["carat", "depth", "table", "x", "y", "z"]
-
-
-def remove_outliers(df, cols):
-    for c in cols:
-        q = df.approxQuantile(c, [0.25, 0.75], 0.01)
-        iqr = q[1] - q[0]
-        df = df.filter(
-            (col(c) >= q[0] - 1.5 * iqr) & (col(c) <= q[1] + 1.5 * iqr)
-        )
-    return df
-
-
-def build_pipeline():
-    indexers = [
-        StringIndexer(inputCol=c, outputCol=c + "_indexed", handleInvalid="keep")
-        for c in CATEGORICAL_COLS
-    ]
-    encoders = [
-        OneHotEncoder(inputCol=c + "_indexed", outputCol=c + "_encoded")
-        for c in CATEGORICAL_COLS
-    ]
-    assembler_inputs = [c + "_encoded" for c in CATEGORICAL_COLS] + NUMERICAL_COLS
-    assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="features")
-    rf = RandomForestRegressor(featuresCol="features", labelCol="price", seed=42)
-    return Pipeline(stages=indexers + encoders + [assembler, rf])
+from pyspark.ml import PipelineModel
 
 
 def main() -> int:
@@ -68,26 +37,32 @@ def main() -> int:
         return 1
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    csv_path = os.path.join(script_dir, "diamonds.csv")
+    model_path = os.path.join(script_dir, "diamond_model")
 
-    if not os.path.exists(csv_path):
-        print(f"diamonds.csv not found at: {csv_path}", file=sys.stderr)
+    if not os.path.exists(model_path):
+        print(
+            f"Model not found at: {model_path}\n"
+            "Run train_model.py first to generate the model.",
+            file=sys.stderr
+        )
         return 1
 
     spark = (
         SparkSession.builder
         .appName("DiamondPricePredict")
-        .master("local[*]")
-        .config("spark.driver.memory", "2g")
+        .master("local[1]")
+        .config("spark.driver.memory", "1g")
+        .config("spark.pyspark.python", sys.executable)
+        .config("spark.pyspark.driver.python", sys.executable)
+        .config("spark.sql.execution.arrow.pyspark.enabled", "false")
+        .config("spark.sql.shuffle.partitions", "2")
+        .config("spark.python.worker.reuse", "false")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")
 
     try:
-        df = spark.read.csv(csv_path, header=True, inferSchema=True)
-        df = remove_outliers(df, NUMERICAL_COLS)
-
-        pipeline_model = build_pipeline().fit(df)
+        pipeline_model = PipelineModel.load(model_path)
 
         input_row = spark.createDataFrame([{
             "carat":   carat,
@@ -99,7 +74,7 @@ def main() -> int:
             "x":       x_val,
             "y":       y_val,
             "z":       z_val,
-            "price":   0.0,   # dummy label — not used during transform
+            "price":   0.0,  # dummy label — not used during transform
         }])
 
         result = pipeline_model.transform(input_row)
