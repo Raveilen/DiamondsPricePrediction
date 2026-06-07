@@ -7,24 +7,73 @@
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 24px;
-            background: #f4f6f8;
+            padding: 0;
+            min-height: 100vh;
+            background: url('diamonds-bg.jpg') center center / cover no-repeat fixed;
             display: flex;
             flex-direction: column;
             align-items: center;
         }
 
+        nav {
+            width: 100%;
+            background: rgba(10, 10, 30, 0.82);
+            backdrop-filter: blur(6px);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 32px;
+            height: 56px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+        }
+
+        nav .brand {
+            color: #e0e8ff;
+            font-size: 1.1rem;
+            font-weight: bold;
+            letter-spacing: 0.04em;
+            margin-right: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        nav .brand span { font-size: 1.3rem; }
+
+        nav a {
+            color: #c9d6ff;
+            text-decoration: none;
+            padding: 8px 18px;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            transition: background 0.18s, color 0.18s;
+        }
+
+        nav a:hover { background: rgba(255,255,255,0.12); color: #fff; }
+        nav a.active { background: rgba(100,140,255,0.28); color: #fff; font-weight: bold; }
+
+        .page-content {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 32px 24px;
+        }
+
         h1 {
-            margin: 0 0 16px 0;
+            margin: 0 0 8px 0;
             text-align: center;
             font-size: 2rem;
+            color: #fff;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.7);
         }
 
         .status {
@@ -32,6 +81,8 @@
             font-weight: bold;
             font-size: 1.1rem;
             text-align: center;
+            color: #c9d6ff;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.6);
         }
 
         .dashboard {
@@ -46,140 +97,181 @@
         .chart-container {
             width: 100%;
             min-height: 420px;
-            background: white;
+            background: rgba(255,255,255,0.88);
+            backdrop-filter: blur(4px);
             padding: 24px;
             border-radius: 14px;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.3);
         }
 
-        .chart-container h2 {
-            margin: 0 0 20px 0;
-            text-align: center;
-            font-size: 1.4rem;
-        }
+        .chart-container h2 { margin: 0 0 20px 0; text-align: center; font-size: 1.4rem; }
 
-        .chart-wrapper {
-            position: relative;
-            width: 100%;
-            height: 520px;
-        }
+        .chart-wrapper { position: relative; width: 100%; height: 520px; }
+        canvas { width: 100% !important; height: 100% !important; }
 
-        canvas {
-            width: 100% !important;
-            height: 100% !important;
+        .clear-btn {
+            display: block;
+            margin: -8px auto 16px;
+            background: rgba(180,30,30,0.75);
+            color: #fff;
+            border: none;
+            padding: 7px 20px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: background 0.18s;
         }
+        .clear-btn:hover { background: rgba(180,30,30,1); }
     </style>
 </head>
 <body>
-<h1>Diamond Price Prediction Dashboard</h1>
-<div class="status" id="status">Connecting...</div>
 
-<div class="dashboard">
-    <div class="chart-container">
-        <h2>Average Predicted Price vs Iteration</h2>
-        <div class="chart-wrapper">
-            <canvas id="avgPriceChart"></canvas>
+<nav>
+    <div class="brand"><span>💎</span> Diamonds Price Prediction</div>
+    <a href="/index.html" class="active">Dashboard</a>
+    <a href="/prediction-form.html">Predict Price</a>
+</nav>
+
+<div class="page-content">
+    <h1>Diamond Price Prediction Dashboard</h1>
+    <div class="status" id="status">Connecting...</div>
+    <button class="clear-btn" onclick="clearCharts()">Clear charts</button>
+
+    <div class="dashboard">
+        <div class="chart-container">
+            <h2>Average Predicted Price vs Iteration</h2>
+            <div class="chart-wrapper"><canvas id="avgPriceChart"></canvas></div>
         </div>
-    </div>
-
-    <div class="chart-container">
-        <h2>RMSE vs Iteration</h2>
-        <div class="chart-wrapper">
-            <canvas id="rmseChart"></canvas>
+        <div class="chart-container">
+            <h2>RMSE vs Iteration</h2>
+            <div class="chart-wrapper"><canvas id="rmseChart"></canvas></div>
         </div>
-    </div>
-
-    <div class="chart-container">
-        <h2>R-Squared vs Iteration</h2>
-        <div class="chart-wrapper">
-            <canvas id="r2Chart"></canvas>
+        <div class="chart-container">
+            <h2>R-Squared vs Iteration</h2>
+            <div class="chart-wrapper"><canvas id="r2Chart"></canvas></div>
         </div>
     </div>
 </div>
 
 <script>
-    const labels = [];
-    const avgPriceData = [];
-    const rmseData = [];
-    const r2Data = [];
+    const CHART_KEY  = 'diamond_chart_data';
+    const FORM_KEY   = 'diamond_prediction_state';
+    const TOKEN_KEY  = 'diamond_startup_token';
 
-    const commonOptions = {
-        responsive: true,
-        maintainAspectRatio: false
-    };
+    function loadStored() {
+        try {
+            const raw = sessionStorage.getItem(CHART_KEY);
+            return raw ? JSON.parse(raw) : { labels: [], avgPrice: [], rmse: [], r2: [] };
+        } catch { return { labels: [], avgPrice: [], rmse: [], r2: [] }; }
+    }
 
-    const avgPriceChart = new Chart(document.getElementById('avgPriceChart'), {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Average Predicted Price',
-                data: avgPriceData,
-                borderColor: 'blue',
-                backgroundColor: 'rgba(0, 0, 255, 0.1)',
-                tension: 0.2,
-                fill: true
-            }]
-        },
-        options: commonOptions
-    });
+    function saveStored(data) {
+        sessionStorage.setItem(CHART_KEY, JSON.stringify(data));
+    }
 
-    const rmseChart = new Chart(document.getElementById('rmseChart'), {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'RMSE',
-                data: rmseData,
-                borderColor: 'red',
-                backgroundColor: 'rgba(255, 0, 0, 0.1)',
-                tension: 0.2,
-                fill: true
-            }]
-        },
-        options: commonOptions
-    });
+    // Chart references — assigned inside initPage() after the async token check.
+    let avgPriceChart, rmseChart, r2Chart, stored;
 
-    const r2Chart = new Chart(document.getElementById('r2Chart'), {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'R²',
-                data: r2Data,
-                borderColor: 'green',
-                backgroundColor: 'rgba(0, 255, 0, 0.1)',
-                tension: 0.2,
-                fill: true
-            }]
-        },
-        options: commonOptions
-    });
+    function clearCharts() {
+        sessionStorage.removeItem(CHART_KEY);
+        stored = { labels: [], avgPrice: [], rmse: [], r2: [] };
+        [avgPriceChart, rmseChart, r2Chart].forEach(c => {
+            c.data.labels = [];
+            c.data.datasets[0].data = [];
+            c.update();
+        });
+    }
 
     function addPoint(message) {
-        labels.push(message.iteration);
-        avgPriceData.push(message.avg_predicted_price);
-        rmseData.push(message.rmse);
-        r2Data.push(message.r2);
+        stored.labels.push(message.iteration);
+        stored.avgPrice.push(message.avg_predicted_price);
+        stored.rmse.push(message.rmse);
+        stored.r2.push(message.r2);
+        saveStored(stored);
+
+        avgPriceChart.data.labels.push(message.iteration);
+        avgPriceChart.data.datasets[0].data.push(message.avg_predicted_price);
+        rmseChart.data.labels.push(message.iteration);
+        rmseChart.data.datasets[0].data.push(message.rmse);
+        r2Chart.data.labels.push(message.iteration);
+        r2Chart.data.datasets[0].data.push(message.r2);
 
         avgPriceChart.update();
         rmseChart.update();
         r2Chart.update();
     }
 
-    const socket = new SockJS('/ws');
-    const stompClient = Stomp.over(socket);
+    async function initPage() {
+        // ── 1. Startup-token check ────────────────────────────────────────────
+        // The server returns the timestamp it started at. If it differs from
+        // what the browser has stored, the server was restarted — wipe ALL
+        // stored data (charts + form) so old values never bleed across runs.
+        // Both pages do this so whichever is loaded first after a restart
+        // always clears everything, regardless of page order.
+        try {
+            const res = await fetch('/api/startup-token');
+            const { startedAt } = await res.json();
+            const serverToken = String(startedAt);
+            if (sessionStorage.getItem(TOKEN_KEY) !== serverToken) {
+                sessionStorage.removeItem(CHART_KEY);
+                sessionStorage.removeItem(FORM_KEY);
+                sessionStorage.setItem(TOKEN_KEY, serverToken);
+            }
+        } catch (e) { /* server unreachable — keep whatever is stored */ }
 
-    stompClient.connect({}, function () {
-        document.getElementById('status').innerText = 'Connected';
-        stompClient.subscribe('/topic/predictions', function (payload) {
-            const message = JSON.parse(payload.body);
-            console.log('Received:', message);
-            addPoint(message);
+        // ── 2. Load data (cleared above if server restarted) ─────────────────
+        stored = loadStored();
+
+        // ── 3. Initialise charts ──────────────────────────────────────────────
+        const commonOptions = { responsive: true, maintainAspectRatio: false };
+
+        avgPriceChart = new Chart(document.getElementById('avgPriceChart'), {
+            type: 'line',
+            data: {
+                labels: [...stored.labels],
+                datasets: [{ label: 'Average Predicted Price', data: [...stored.avgPrice],
+                    borderColor: 'blue', backgroundColor: 'rgba(0,0,255,0.1)', tension: 0.2, fill: true }]
+            },
+            options: commonOptions
         });
-    }, function () {
-        document.getElementById('status').innerText = 'Connection failed';
-    });
+
+        rmseChart = new Chart(document.getElementById('rmseChart'), {
+            type: 'line',
+            data: {
+                labels: [...stored.labels],
+                datasets: [{ label: 'RMSE', data: [...stored.rmse],
+                    borderColor: 'red', backgroundColor: 'rgba(255,0,0,0.1)', tension: 0.2, fill: true }]
+            },
+            options: commonOptions
+        });
+
+        r2Chart = new Chart(document.getElementById('r2Chart'), {
+            type: 'line',
+            data: {
+                labels: [...stored.labels],
+                datasets: [{ label: 'R²', data: [...stored.r2],
+                    borderColor: 'green', backgroundColor: 'rgba(0,255,0,0.1)', tension: 0.2, fill: true }]
+            },
+            options: commonOptions
+        });
+
+        // ── 4. Connect WebSocket ──────────────────────────────────────────────
+        const socket = new SockJS('/ws');
+        const stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function () {
+            document.getElementById('status').innerText = 'Connected';
+            stompClient.subscribe('/topic/predictions', function (payload) {
+                const message = JSON.parse(payload.body);
+                console.log('Received:', message);
+                addPoint(message);
+            });
+        }, function () {
+            document.getElementById('status').innerText = 'Connection failed';
+        });
+    }
+
+    initPage();
 </script>
 </body>
 </html>
