@@ -50,9 +50,6 @@ public class PythonPredictionService {
         try {
             Process process = processBuilder.start();
 
-            // Drain stdout and stderr concurrently — avoids OS pipe buffer deadlock.
-            // If both streams are read only AFTER waitFor(), the Python process can
-            // block trying to write while Java is blocked waiting for it to exit.
             CompletableFuture<String> stdoutFuture = CompletableFuture.supplyAsync(() -> {
                 try {
                     return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();

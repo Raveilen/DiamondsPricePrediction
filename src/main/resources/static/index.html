@@ -202,7 +202,6 @@
     }
 
     async function initPage() {
-        // ── 1. Startup-token check ────────────────────────────────────────────
         // The server returns the timestamp it started at. If it differs from
         // what the browser has stored, the server was restarted — wipe ALL
         // stored data (charts + form) so old values never bleed across runs.
@@ -217,12 +216,12 @@
                 sessionStorage.removeItem(FORM_KEY);
                 sessionStorage.setItem(TOKEN_KEY, serverToken);
             }
-        } catch (e) { /* server unreachable — keep whatever is stored */ }
+        } catch (e) {  }
 
-        // ── 2. Load data (cleared above if server restarted) ─────────────────
+        //Stored Endpoint Values
         stored = loadStored();
 
-        // ── 3. Initialise charts ──────────────────────────────────────────────
+        //Charts
         const commonOptions = { responsive: true, maintainAspectRatio: false };
 
         avgPriceChart = new Chart(document.getElementById('avgPriceChart'), {
@@ -255,7 +254,7 @@
             options: commonOptions
         });
 
-        // ── 4. Connect WebSocket ──────────────────────────────────────────────
+        //Connect WebSocket
         const socket = new SockJS('/ws');
         const stompClient = Stomp.over(socket);
 
