@@ -6,10 +6,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 @RestController
-public class AppInfoController {
-
-    // Captured once when the application starts — a new value is produced
-    // on every restart, which the frontend uses to detect stale stored data.
+public class AppInfoController
+{
     private final long startedAt = System.currentTimeMillis();
 
     @GetMapping("/api/startup-token")
